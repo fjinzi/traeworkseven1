@@ -8,6 +8,7 @@ import com.seckill.mapper.UserMapper;
 import com.seckill.service.UserAdminService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -15,14 +16,22 @@ import org.springframework.util.StringUtils;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 public class UserAdminServiceImpl implements UserAdminService {
 
+    private static final String USER_CACHE_KEY_PREFIX = "user:info:";
+    private static final long CACHE_EXPIRE_TIME = 5;
+    private static final TimeUnit CACHE_EXPIRE_UNIT = TimeUnit.MINUTES;
+
     @Autowired
     private UserMapper userMapper;
+
+    @Autowired
+    private RedisTemplate<String, Object> redisTemplate;
 
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
@@ -67,11 +76,35 @@ public class UserAdminServiceImpl implements UserAdminService {
 
     @Override
     public UserInfoDTO getUserById(Long id) {
+        String cacheKey = USER_CACHE_KEY_PREFIX + id;
+        UserInfoDTO cachedUser = null;
+        
+        try {
+            cachedUser = (UserInfoDTO) redisTemplate.opsForValue().get(cacheKey);
+            if (cachedUser != null) {
+                log.debug("从Redis缓存获取用户信息，userId={}", id);
+                return cachedUser;
+            }
+            log.debug("缓存未命中，从数据库查询用户信息，userId={}", id);
+        } catch (Exception e) {
+            log.warn("Redis读取失败，降级到数据库查询，userId={}, error={}", id, e.getMessage());
+        }
+
         User user = userMapper.selectById(id);
         if (user == null || user.getIsDeleted() == 1) {
             throw new RuntimeException("用户不存在");
         }
-        return buildUserInfoDTO(user);
+
+        UserInfoDTO userInfo = buildUserInfoDTO(user);
+        
+        try {
+            redisTemplate.opsForValue().set(cacheKey, userInfo, CACHE_EXPIRE_TIME, CACHE_EXPIRE_UNIT);
+            log.debug("用户信息已写入Redis缓存，userId={}", id);
+        } catch (Exception e) {
+            log.warn("Redis写入失败，userId={}, error={}", id, e.getMessage());
+        }
+        
+        return userInfo;
     }
 
     @Override
@@ -100,7 +133,16 @@ public class UserAdminServiceImpl implements UserAdminService {
         userMapper.insert(user);
         log.info("管理员创建用户成功，userId={}, username={}", user.getId(), user.getUsername());
 
-        return buildUserInfoDTO(user);
+        UserInfoDTO userInfo = buildUserInfoDTO(user);
+        String cacheKey = USER_CACHE_KEY_PREFIX + user.getId();
+        try {
+            redisTemplate.opsForValue().set(cacheKey, userInfo, CACHE_EXPIRE_TIME, CACHE_EXPIRE_UNIT);
+            log.debug("新创建用户信息已写入Redis缓存，userId={}", user.getId());
+        } catch (Exception e) {
+            log.warn("Redis写入失败，userId={}, error={}", user.getId(), e.getMessage());
+        }
+
+        return userInfo;
     }
 
     @Override
@@ -135,7 +177,17 @@ public class UserAdminServiceImpl implements UserAdminService {
         userMapper.updateById(user);
 
         log.info("管理员更新用户成功，userId={}", id);
-        return buildUserInfoDTO(user);
+
+        UserInfoDTO userInfo = buildUserInfoDTO(user);
+        String cacheKey = USER_CACHE_KEY_PREFIX + id;
+        try {
+            redisTemplate.opsForValue().set(cacheKey, userInfo, CACHE_EXPIRE_TIME, CACHE_EXPIRE_UNIT);
+            log.debug("用户信息缓存已更新，userId={}", id);
+        } catch (Exception e) {
+            log.warn("Redis写入失败，userId={}, error={}", id, e.getMessage());
+        }
+
+        return userInfo;
     }
 
     @Override
@@ -155,6 +207,14 @@ public class UserAdminServiceImpl implements UserAdminService {
         userMapper.updateById(user);
 
         log.info("管理员逻辑删除用户成功，userId={}", id);
+
+        String cacheKey = USER_CACHE_KEY_PREFIX + id;
+        try {
+            redisTemplate.delete(cacheKey);
+            log.debug("用户信息缓存已删除，userId={}", id);
+        } catch (Exception e) {
+            log.warn("Redis删除缓存失败，userId={}, error={}", id, e.getMessage());
+        }
     }
 
     @Override
@@ -174,6 +234,15 @@ public class UserAdminServiceImpl implements UserAdminService {
         userMapper.updateById(user);
 
         log.info("管理员恢复用户成功，userId={}", id);
+
+        UserInfoDTO userInfo = buildUserInfoDTO(user);
+        String cacheKey = USER_CACHE_KEY_PREFIX + id;
+        try {
+            redisTemplate.opsForValue().set(cacheKey, userInfo, CACHE_EXPIRE_TIME, CACHE_EXPIRE_UNIT);
+            log.debug("恢复用户信息已写入Redis缓存，userId={}", id);
+        } catch (Exception e) {
+            log.warn("Redis写入失败，userId={}, error={}", id, e.getMessage());
+        }
     }
 
     private UserInfoDTO buildUserInfoDTO(User user) {
