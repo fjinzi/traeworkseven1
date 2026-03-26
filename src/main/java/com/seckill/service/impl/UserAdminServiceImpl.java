@@ -6,6 +6,7 @@ import com.seckill.dto.*;
 import com.seckill.entity.User;
 import com.seckill.mapper.UserMapper;
 import com.seckill.service.UserAdminService;
+import com.seckill.service.UserCacheService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -23,6 +24,9 @@ public class UserAdminServiceImpl implements UserAdminService {
 
     @Autowired
     private UserMapper userMapper;
+
+    @Autowired
+    private UserCacheService userCacheService;
 
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
@@ -67,11 +71,21 @@ public class UserAdminServiceImpl implements UserAdminService {
 
     @Override
     public UserInfoDTO getUserById(Long id) {
+        UserInfoDTO cachedInfo = userCacheService.getUserInfoFromCache(id);
+        if (cachedInfo != null) {
+            log.debug("从缓存获取用户信息: userId={}", id);
+            return cachedInfo;
+        }
+
         User user = userMapper.selectById(id);
         if (user == null || user.getIsDeleted() == 1) {
             throw new RuntimeException("用户不存在");
         }
-        return buildUserInfoDTO(user);
+        
+        UserInfoDTO userInfo = buildUserInfoDTO(user);
+        userCacheService.cacheUserInfo(id, userInfo);
+        
+        return userInfo;
     }
 
     @Override
@@ -100,7 +114,12 @@ public class UserAdminServiceImpl implements UserAdminService {
         userMapper.insert(user);
         log.info("管理员创建用户成功，userId={}, username={}", user.getId(), user.getUsername());
 
-        return buildUserInfoDTO(user);
+        userCacheService.cacheUsernameExists(dto.getUsername(), true);
+
+        UserInfoDTO userInfo = buildUserInfoDTO(user);
+        userCacheService.cacheUserInfo(user.getId(), userInfo);
+        
+        return userInfo;
     }
 
     @Override
@@ -134,6 +153,8 @@ public class UserAdminServiceImpl implements UserAdminService {
         user.setUpdateTime(LocalDateTime.now());
         userMapper.updateById(user);
 
+        userCacheService.evictUserCache(id);
+
         log.info("管理员更新用户成功，userId={}", id);
         return buildUserInfoDTO(user);
     }
@@ -154,6 +175,9 @@ public class UserAdminServiceImpl implements UserAdminService {
         user.setUpdateTime(LocalDateTime.now());
         userMapper.updateById(user);
 
+        userCacheService.evictUserCache(id);
+        userCacheService.evictUsernameExistsCache(user.getUsername());
+
         log.info("管理员逻辑删除用户成功，userId={}", id);
     }
 
@@ -172,6 +196,9 @@ public class UserAdminServiceImpl implements UserAdminService {
         user.setIsDeleted(0);
         user.setUpdateTime(LocalDateTime.now());
         userMapper.updateById(user);
+
+        userCacheService.evictUserCache(id);
+        userCacheService.cacheUsernameExists(user.getUsername(), true);
 
         log.info("管理员恢复用户成功，userId={}", id);
     }
