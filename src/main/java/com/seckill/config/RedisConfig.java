@@ -1,13 +1,18 @@
 package com.seckill.config;
 
 
+import com.fasterxml.jackson.annotation.JsonAutoDetect;
+import com.fasterxml.jackson.annotation.PropertyAccessor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
+import lombok.extern.slf4j.Slf4j;
 import org.redisson.Redisson;
 import org.redisson.api.RedissonClient;
 import org.redisson.config.Config;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
@@ -15,6 +20,7 @@ import org.springframework.data.redis.core.RedisTemplate;
 import org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;
 import org.springframework.data.redis.serializer.StringRedisSerializer;
 
+@Slf4j
 @Configuration
 public class RedisConfig {
 
@@ -28,13 +34,23 @@ public class RedisConfig {
     private int redisDatabase;
 
     @Bean
+    @ConditionalOnProperty(name = "spring.data.redis.host", matchIfMissing = true)
     public RedissonClient redissonClient() {
-        Config config = new Config();
-        config.useSingleServer()
-                .setAddress("redis://" + redisHost + ":" + redisPort)
-                .setPassword(null)
-                .setDatabase(redisDatabase);
-        return Redisson.create(config);
+        try {
+            Config config = new Config();
+            config.useSingleServer()
+                    .setAddress("redis://" + redisHost + ":" + redisPort)
+                    .setPassword(null)
+                    .setDatabase(redisDatabase)
+                    .setConnectTimeout(2000)
+                    .setTimeout(1000)
+                    .setRetryAttempts(1)
+                    .setRetryInterval(500);
+            return Redisson.create(config);
+        } catch (Exception e) {
+            log.warn("Redis连接失败，Redisson客户端未初始化: {}", e.getMessage());
+            return null;
+        }
     }
 
     @Bean
@@ -45,6 +61,8 @@ public class RedisConfig {
         ObjectMapper objectMapper = new ObjectMapper();
         objectMapper.registerModule(new JavaTimeModule());
         objectMapper.disable(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS);
+        objectMapper.setVisibility(PropertyAccessor.ALL, JsonAutoDetect.Visibility.ANY);
+        objectMapper.activateDefaultTyping(LaissezFaireSubTypeValidator.instance, ObjectMapper.DefaultTyping.NON_FINAL);
 
         GenericJackson2JsonRedisSerializer serializer = new GenericJackson2JsonRedisSerializer(objectMapper);
 
