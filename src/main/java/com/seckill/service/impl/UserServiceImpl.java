@@ -6,6 +6,7 @@ import com.seckill.dto.UserLoginDTO;
 import com.seckill.dto.UserRegisterDTO;
 import com.seckill.entity.User;
 import com.seckill.mapper.UserMapper;
+import com.seckill.service.UserCacheService;
 import com.seckill.service.UserService;
 import com.seckill.util.JwtUtil;
 
@@ -14,6 +15,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 
@@ -27,9 +29,13 @@ public class UserServiceImpl implements UserService {
     @Autowired
     private JwtUtil jwtUtil;
 
+    @Autowired
+    private UserCacheService userCacheService;
+
     private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
 
     @Override
+    @Transactional
     public UserInfoDTO register(UserRegisterDTO dto) {
         log.info("开始注册用户：username={}", dto.getUsername());
         
@@ -54,10 +60,15 @@ public class UserServiceImpl implements UserService {
         userMapper.insert(user);
         log.info("用户插入成功，userId={}", user.getId());
 
+        userCacheService.cacheUsernameExists(dto.getUsername(), true);
+
         String token = jwtUtil.generateToken(user.getId(), user.getUsername(), user.getRoleType());
         log.info("用户注册成功，userId={}, token={}", user.getId(), token.substring(0, Math.min(20, token.length())) + "...");
 
-        return buildUserInfoDTO(user, token);
+        UserInfoDTO userInfo = buildUserInfoDTO(user, token);
+        userCacheService.cacheUserInfo(user.getId(), userInfo);
+        
+        return userInfo;
     }
 
     @Override
@@ -78,24 +89,48 @@ public class UserServiceImpl implements UserService {
 
         String token = jwtUtil.generateToken(user.getId(), user.getUsername(), user.getRoleType());
 
-        return buildUserInfoDTO(user, token);
+        UserInfoDTO userInfo = buildUserInfoDTO(user, token);
+        userCacheService.cacheUserInfo(user.getId(), userInfo);
+        userCacheService.cacheUserEntity(user.getId(), user);
+        
+        return userInfo;
     }
 
     @Override
     public UserInfoDTO getUserInfo(Long userId) {
+        UserInfoDTO cachedInfo = userCacheService.getUserInfoFromCache(userId);
+        if (cachedInfo != null) {
+            log.debug("从缓存获取用户信息: userId={}", userId);
+            return cachedInfo;
+        }
+
         User user = userMapper.selectById(userId);
         if (user == null || user.getIsDeleted() == 1) {
             return null;
         }
-        return buildUserInfoDTO(user, null);
+        
+        UserInfoDTO userInfo = buildUserInfoDTO(user, null);
+        userCacheService.cacheUserInfo(userId, userInfo);
+        
+        return userInfo;
     }
 
     @Override
     public boolean checkUsernameExists(String username) {
+        Boolean cachedExists = userCacheService.getUsernameExistsFromCache(username);
+        if (cachedExists != null) {
+            log.debug("从缓存获取用户名存在状态: username={}", username);
+            return cachedExists;
+        }
+
         LambdaQueryWrapper<User> queryWrapper = new LambdaQueryWrapper<>();
         queryWrapper.eq(User::getUsername, username);
         queryWrapper.eq(User::getIsDeleted, 0);
-        return userMapper.selectCount(queryWrapper) > 0;
+        boolean exists = userMapper.selectCount(queryWrapper) > 0;
+        
+        userCacheService.cacheUsernameExists(username, exists);
+        
+        return exists;
     }
 
     private UserInfoDTO buildUserInfoDTO(User user, String token) {
