@@ -32,7 +32,7 @@ public class SeckillProductServiceImpl implements SeckillProductService {
     @Autowired
     private SeckillProductMapper productMapper;
 
-    @Autowired
+    @Autowired(required = false)
     private RedisTemplate<String, Object> redisTemplate;
 
     @Override
@@ -141,6 +141,11 @@ public class SeckillProductServiceImpl implements SeckillProductService {
 
     @Override
     public void syncToRedis(Long productId) {
+        if (redisTemplate == null) {
+            log.warn("Redis服务不可用，跳过同步: productId={}", productId);
+            return;
+        }
+        
         log.info("同步商品到Redis: productId={}", productId);
         
         SeckillProduct product = productMapper.selectById(productId);
@@ -152,14 +157,22 @@ public class SeckillProductServiceImpl implements SeckillProductService {
         String productKey = PRODUCT_KEY_PREFIX + productId;
         String stockKey = STOCK_KEY_PREFIX + productId;
         
-        redisTemplate.opsForValue().set(productKey, product, CACHE_EXPIRE_HOURS, TimeUnit.HOURS);
-        redisTemplate.opsForValue().set(stockKey, product.getStock(), CACHE_EXPIRE_HOURS, TimeUnit.HOURS);
-        
-        log.info("商品同步到Redis成功: productId={}, stock={}", productId, product.getStock());
+        try {
+            redisTemplate.opsForValue().set(productKey, product, CACHE_EXPIRE_HOURS, TimeUnit.HOURS);
+            redisTemplate.opsForValue().set(stockKey, product.getStock(), CACHE_EXPIRE_HOURS, TimeUnit.HOURS);
+            log.info("商品同步到Redis成功: productId={}, stock={}", productId, product.getStock());
+        } catch (Exception e) {
+            log.warn("Redis写入失败，productId={}, error={}", productId, e.getMessage());
+        }
     }
 
     @Override
     public void syncAllToRedis() {
+        if (redisTemplate == null) {
+            log.warn("Redis服务不可用，跳过全量同步");
+            return;
+        }
+        
         log.info("同步所有商品到Redis");
         
         List<SeckillProduct> products = productMapper.selectList(null);
@@ -172,15 +185,23 @@ public class SeckillProductServiceImpl implements SeckillProductService {
 
     @Override
     public void removeFromRedis(Long productId) {
+        if (redisTemplate == null) {
+            log.warn("Redis服务不可用，跳过移除: productId={}", productId);
+            return;
+        }
+        
         log.info("从Redis移除商品: productId={}", productId);
         
         String productKey = PRODUCT_KEY_PREFIX + productId;
         String stockKey = STOCK_KEY_PREFIX + productId;
         
-        redisTemplate.delete(productKey);
-        redisTemplate.delete(stockKey);
-        
-        log.info("商品从Redis移除成功: productId={}", productId);
+        try {
+            redisTemplate.delete(productKey);
+            redisTemplate.delete(stockKey);
+            log.info("商品从Redis移除成功: productId={}", productId);
+        } catch (Exception e) {
+            log.warn("Redis删除失败，productId={}, error={}", productId, e.getMessage());
+        }
     }
 
     @Override

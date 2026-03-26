@@ -22,10 +22,10 @@ import java.util.concurrent.TimeUnit;
 @RequestMapping("/api/seckill")
 public class SeckillController {
 
-    @Autowired
+    @Autowired(required = false)
     private RedissonClient redissonClient;
 
-    @Autowired
+    @Autowired(required = false)
     private RedisTemplate<String, Object> redisTemplate;
 
     @Autowired
@@ -39,6 +39,12 @@ public class SeckillController {
         if (userId == null) {
             result.put("success", false);
             result.put("message", "请先登录后再进行秒杀");
+            return ResponseEntity.ok(result);
+        }
+
+        if (redisTemplate == null || redissonClient == null) {
+            result.put("success", false);
+            result.put("message", "秒杀功能暂不可用（Redis服务未启动）");
             return ResponseEntity.ok(result);
         }
 

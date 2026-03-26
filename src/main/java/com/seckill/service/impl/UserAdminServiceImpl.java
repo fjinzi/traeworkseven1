@@ -77,21 +77,33 @@ public class UserAdminServiceImpl implements UserAdminService {
     @Override
     public UserInfoDTO getUserById(Long id) {
         String cacheKey = USER_CACHE_KEY_PREFIX + id;
-        UserInfoDTO cachedUser = (UserInfoDTO) redisTemplate.opsForValue().get(cacheKey);
-        if (cachedUser != null) {
-            log.debug("从Redis缓存获取用户信息，userId={}", id);
-            return cachedUser;
+        UserInfoDTO cachedUser = null;
+        
+        try {
+            cachedUser = (UserInfoDTO) redisTemplate.opsForValue().get(cacheKey);
+            if (cachedUser != null) {
+                log.debug("从Redis缓存获取用户信息，userId={}", id);
+                return cachedUser;
+            }
+            log.debug("缓存未命中，从数据库查询用户信息，userId={}", id);
+        } catch (Exception e) {
+            log.warn("Redis读取失败，降级到数据库查询，userId={}, error={}", id, e.getMessage());
         }
 
-        log.debug("缓存未命中，从数据库查询用户信息，userId={}", id);
         User user = userMapper.selectById(id);
         if (user == null || user.getIsDeleted() == 1) {
             throw new RuntimeException("用户不存在");
         }
 
         UserInfoDTO userInfo = buildUserInfoDTO(user);
-        redisTemplate.opsForValue().set(cacheKey, userInfo, CACHE_EXPIRE_TIME, CACHE_EXPIRE_UNIT);
-        log.debug("用户信息已写入Redis缓存，userId={}", id);
+        
+        try {
+            redisTemplate.opsForValue().set(cacheKey, userInfo, CACHE_EXPIRE_TIME, CACHE_EXPIRE_UNIT);
+            log.debug("用户信息已写入Redis缓存，userId={}", id);
+        } catch (Exception e) {
+            log.warn("Redis写入失败，userId={}, error={}", id, e.getMessage());
+        }
+        
         return userInfo;
     }
 
@@ -123,8 +135,12 @@ public class UserAdminServiceImpl implements UserAdminService {
 
         UserInfoDTO userInfo = buildUserInfoDTO(user);
         String cacheKey = USER_CACHE_KEY_PREFIX + user.getId();
-        redisTemplate.opsForValue().set(cacheKey, userInfo, CACHE_EXPIRE_TIME, CACHE_EXPIRE_UNIT);
-        log.debug("新创建用户信息已写入Redis缓存，userId={}", user.getId());
+        try {
+            redisTemplate.opsForValue().set(cacheKey, userInfo, CACHE_EXPIRE_TIME, CACHE_EXPIRE_UNIT);
+            log.debug("新创建用户信息已写入Redis缓存，userId={}", user.getId());
+        } catch (Exception e) {
+            log.warn("Redis写入失败，userId={}, error={}", user.getId(), e.getMessage());
+        }
 
         return userInfo;
     }
@@ -164,8 +180,12 @@ public class UserAdminServiceImpl implements UserAdminService {
 
         UserInfoDTO userInfo = buildUserInfoDTO(user);
         String cacheKey = USER_CACHE_KEY_PREFIX + id;
-        redisTemplate.opsForValue().set(cacheKey, userInfo, CACHE_EXPIRE_TIME, CACHE_EXPIRE_UNIT);
-        log.debug("用户信息缓存已更新，userId={}", id);
+        try {
+            redisTemplate.opsForValue().set(cacheKey, userInfo, CACHE_EXPIRE_TIME, CACHE_EXPIRE_UNIT);
+            log.debug("用户信息缓存已更新，userId={}", id);
+        } catch (Exception e) {
+            log.warn("Redis写入失败，userId={}, error={}", id, e.getMessage());
+        }
 
         return userInfo;
     }
@@ -189,8 +209,12 @@ public class UserAdminServiceImpl implements UserAdminService {
         log.info("管理员逻辑删除用户成功，userId={}", id);
 
         String cacheKey = USER_CACHE_KEY_PREFIX + id;
-        redisTemplate.delete(cacheKey);
-        log.debug("用户信息缓存已删除，userId={}", id);
+        try {
+            redisTemplate.delete(cacheKey);
+            log.debug("用户信息缓存已删除，userId={}", id);
+        } catch (Exception e) {
+            log.warn("Redis删除缓存失败，userId={}, error={}", id, e.getMessage());
+        }
     }
 
     @Override
@@ -213,8 +237,12 @@ public class UserAdminServiceImpl implements UserAdminService {
 
         UserInfoDTO userInfo = buildUserInfoDTO(user);
         String cacheKey = USER_CACHE_KEY_PREFIX + id;
-        redisTemplate.opsForValue().set(cacheKey, userInfo, CACHE_EXPIRE_TIME, CACHE_EXPIRE_UNIT);
-        log.debug("恢复用户信息已写入Redis缓存，userId={}", id);
+        try {
+            redisTemplate.opsForValue().set(cacheKey, userInfo, CACHE_EXPIRE_TIME, CACHE_EXPIRE_UNIT);
+            log.debug("恢复用户信息已写入Redis缓存，userId={}", id);
+        } catch (Exception e) {
+            log.warn("Redis写入失败，userId={}, error={}", id, e.getMessage());
+        }
     }
 
     private UserInfoDTO buildUserInfoDTO(User user) {
